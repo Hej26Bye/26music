@@ -1,0 +1,196 @@
+name: Generate AI lyrics
+
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 19 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: generate-ai-lyrics
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      MUSIC_BRANCH: ${{ github.event.repository.default_branch }}
+      GIT_LFS_SKIP_SMUDGE: '1'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Transcribe audio without an LRC file
+        id: transcribe
+        shell: bash
+        run: |
+          python - <<'PY'
+          import math
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          import time
+
+          AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".oga", ".opus", ".webm"}
+          LFS_HEADER = b"version https://git-lfs.github.com/spec/v1"
+
+          def git(*args):
+              return subprocess.check_output(["git", *args])
+
+          def tracked_audio():
+              known_lyrics = set()
+              audio = []
+              for entry in git("ls-files", "--stage", "-z").split(b"\0"):
+                  if not entry:
+                      continue
+                  info, raw_path = entry.split(b"\t", 1)
+                  mode, _, stage = info.split()
+                  path = Path(os.fsdecode(raw_path))
+                  suffix = path.suffix.lower()
+                  if suffix == ".lrc":
+                      known_lyrics.add(str(path).casefold())
+                  elif stage == b"0" and mode in {b"100644", b"100755"} and suffix in AUDIO_EXTENSIONS:
+                      audio.append(path)
+              for path in sorted(audio):
+                  lyrics = path.with_suffix(".lrc")
+                  key = str(lyrics).casefold()
+                  if key not in known_lyrics and not lyrics.exists():
+                      known_lyrics.add(key)
+                      yield path, lyrics
+
+          def is_pointer(path):
+              with path.open("rb") as file:
+                  return file.read(len(LFS_HEADER)) == LFS_HEADER
+
+          def audio_for_model(track, scratch):
+              if not is_pointer(track):
+                  return track
+              audio_path = scratch / ("audio" + track.suffix.lower())
+              lfs_environment = os.environ.copy()
+              lfs_environment.pop("GIT_LFS_SKIP_SMUDGE", None)
+              with track.open("rb") as pointer, audio_path.open("wb") as audio:
+                  subprocess.run(
+                      ["git", "lfs", "smudge"], stdin=pointer, stdout=audio,
+                      env=lfs_environment, check=True, timeout=240,
+                  )
+              if not audio_path.stat().st_size or is_pointer(audio_path):
+                  raise RuntimeError("Git LFS did not return audio")
+              return audio_path
+
+          def to_centiseconds(seconds):
+              return max(0, round(seconds * 100))
+
+          def format_time(centiseconds):
+              minutes, remainder = divmod(centiseconds, 6000)
+              seconds, fraction = divmod(remainder, 100)
+              return f"[{minutes:02d}:{seconds:02d}.{fraction:02d}]"
+
+          def to_lrc(segments):
+              phrases = []
+              for segment in segments:
+                  text = " ".join(segment.text.split())
+                  if not text or not math.isfinite(segment.start) or not math.isfinite(segment.end):
+                      continue
+                  if segment.no_speech_prob > 0.65 and segment.avg_logprob < -1.0:
+                      continue
+                  start = to_centiseconds(segment.start)
+                  end = max(start + 1, to_centiseconds(segment.end))
+                  if phrases and start <= phrases[-1][0]:
+                      start = phrases[-1][0] + 1
+                      end = max(end, start + 1)
+                  phrases.append((start, end, text))
+              if not phrases:
+                  return None
+              rows = ["[by:AI transcription (Whisper)]"]
+              for index, (start, end, text) in enumerate(phrases):
+                  rows.append(format_time(start) + text)
+                  next_start = phrases[index + 1][0] if index + 1 < len(phrases) else None
+                  if next_start is None or next_start - end >= 75:
+                      rows.append(format_time(end))
+              return "\n".join(rows) + "\n"
+
+          def main():
+              pending = list(tracked_audio())
+              if not pending:
+                  print("Every tracked audio file has an LRC file.")
+                  return 0
+
+              started = time.monotonic()
+              subprocess.run([sys.executable, "-m", "pip", "install", "faster-whisper==1.2.1"], check=True)
+              from faster_whisper import WhisperModel
+
+              model = WhisperModel("turbo", device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 2)
+              created = empty = failures = processed = 0
+              for track, lyrics in pending:
+                  if time.monotonic() - started > 240 * 60:
+                      print("Time budget reached. The next run will scan for the remaining tracks.")
+                      break
+                  processed += 1
+                  print(f"Transcribing {track}", flush=True)
+                  try:
+                      with tempfile.TemporaryDirectory() as directory:
+                          source = audio_for_model(track, Path(directory))
+                          segments, _ = model.transcribe(
+                              str(source), task="transcribe", beam_size=5,
+                              condition_on_previous_text=False, word_timestamps=True,
+                              hallucination_silence_threshold=2,
+                          )
+                          lrc = to_lrc(segments)
+                      if lrc is None:
+                          print(f"No clear vocals detected in {track}")
+                          empty += 1
+                          continue
+                      with lyrics.open("x", encoding="utf-8", newline="\n") as output:
+                          output.write(lrc)
+                      subprocess.run(["git", "--literal-pathspecs", "add", "--", str(lyrics)], check=True)
+                      created += 1
+                  except Exception as error:
+                      print(f"Transcription failed for {track}: {error}", file=sys.stderr)
+                      failures += 1
+
+              summary = (
+                  f"Created {created} timed lyrics files. "
+                  f"{empty} tracks produced no clear lyrics, {failures} failed, "
+                  f"and {len(pending) - processed} were deferred.\n"
+              )
+              print(summary)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+                  output.write(summary)
+              return int(failures > 0)
+
+          sys.exit(main())
+          PY
+
+      - name: Commit generated lyrics
+        if: ${{ !cancelled() && (steps.transcribe.outcome == 'success' || steps.transcribe.outcome == 'failure') }}
+        shell: bash
+        run: |
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Generate timed lyrics for songs'
+          for attempt in 1 2 3; do
+            git fetch origin "$MUSIC_BRANCH"
+            git rebase FETCH_HEAD
+            if git push origin "HEAD:refs/heads/$MUSIC_BRANCH"; then
+              exit 0
+            fi
+          done
+          echo 'Could not push generated lyrics to the default branch.'
+          exit 1
