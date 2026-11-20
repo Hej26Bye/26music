@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#111019">
-<title>YMusic — Music Library</title>
+<title>26music — Music Library</title>
 <style>
   :root{color-scheme:dark;--bg:#111019;--sidebar:#181622;--line:#ffffff17;--text:#faf8ff;--muted:#b0aac1;--accent:#cbbaff;--bar:#1d1a29;font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
   *{box-sizing:border-box}
@@ -183,7 +183,7 @@
 <div class="shell">
   <aside class="sidebar">
     <div class="side-inner">
-      <div class="brand"><span class="mark" data-icon="music"></span>YMusic</div>
+      <div class="brand"><span class="mark" data-icon="music"></span>26music</div>
       <nav aria-label="Library">
         <p class="nav-label">Library</p>
         <button class="nav-btn" id="albums-nav" aria-current="page"><span data-icon="albums"></span>Albums</button>
@@ -282,7 +282,7 @@
   const pagesOwner = pageURL.hostname.match(/^([a-z\d-]+)\.github\.io$/i)?.[1];
   const pagesProject = pageURL.pathname.split('/')[1];
   const pagesRepo = pagesOwner ? parseRepository(`${pagesOwner}/${pagesProject || pagesOwner + '.github.io'}`) : null;
-  const repo = parseRepository(pageURL.searchParams.get('repo')) || pagesRepo || { owner: 'Hej26Bye', name: 'YMusic_' };
+  const repo = parseRepository(pageURL.searchParams.get('repo')) || pagesRepo || { owner: 'Hej26Bye', name: '26music' };
   repo.branch = 'main';
   const repoSlug = `${repo.owner}/${repo.name}`;
   const repoURL = `https://github.com/${repoSlug}`;
