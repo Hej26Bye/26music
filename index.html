@@ -69,6 +69,7 @@
   .track{display:grid;grid-template-columns:32px minmax(0,1fr) 23px;gap:12px;align-items:center;text-align:left;width:100%;padding:10px 12px;border-radius:8px;border-bottom:1px solid var(--line)}
   .track[aria-current="true"]{color:var(--accent)}
   .track-index{color:var(--muted);font-size:13px}
+  .track .cover{border-radius:5px}
   .track .icon{width:16px;height:16px}
   .player{position:fixed;inset:auto 0 0;z-index:4;background:var(--bar);border-top:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) minmax(248px,1.5fr) minmax(0,1fr);align-items:center;gap:16px;padding:12px clamp(12px,3vw,35px) max(12px,env(safe-area-inset-bottom))}
   .now{display:grid;grid-template-columns:47px minmax(0,1fr);align-items:center;gap:11px;min-width:0}
@@ -355,8 +356,10 @@
   function catalog(paths) {
     const groups = new Map();
     const pictures = new Map();
+    const trackPictures = new Map(paths.filter(path => path.endsWith('.cover.jpg'))
+      .map(path => [path.slice(0, -'.cover.jpg'.length), path]));
     for (const path of paths) {
-      if (artwork.test(path)) {
+      if (artwork.test(path) && !path.endsWith('.cover.jpg')) {
         const folder = path.split('/').slice(0, -1).join('/');
         if (!pictures.has(folder)) pictures.set(folder, []);
         pictures.get(folder).push(path);
@@ -373,24 +376,26 @@
       const album = groups.get(folder);
       const filename = path.split('/').at(-1);
       const title = filename.replace(audioFile, '').replace(/\s*\[[\w-]{11}\]$/, '').replace(/^\d{1,3}(?:[.)_-]\s*|\s+-\s+|\s+)/, '');
-      album.tracks.push({ path, title: title || filename, album });
+      album.tracks.push({ path, title: title || filename, album, cover: trackPictures.get(path) });
     }
     for (const album of groups.values()) {
       const choices = pictures.get(album.id) || [];
-      album.cover = choices.find(path => /(?:^|\/)(cover|front|folder|artwork|album)(?:[._ -]|$)/i.test(path)) || choices[0];
       album.tracks.sort((a, b) => collator.compare(a.path, b.path));
+      album.cover = choices.find(path => /(?:^|\/)(cover|front|folder|artwork|album)(?:[._ -]|$)/i.test(path))
+        || choices[0] || album.tracks.find(track => track.cover)?.cover;
     }
     return [...groups.values()].sort((a, b) => collator.compare(a.title, b.title));
   }
-  function cover(album) {
+  function cover(album, trackCover) {
     const node = element('div', 'cover');
     const hue = [...(album?.title || 'Music')].reduce((sum, char) => (sum * 31 + char.codePointAt(0)) % 360, 220);
     node.style.setProperty('--h', hue);
     node.innerHTML = icon('music');
     node.setAttribute('aria-hidden', 'true');
-    if (album?.cover) {
+    const images = [...new Set([trackCover, album?.cover].filter(Boolean))];
+    if (images.length) {
       const image = element('img');
-      const urls = sources(album.cover);
+      const urls = images.flatMap(sources);
       image.alt = '';
       image.loading = 'lazy';
       image.addEventListener('error', () => {
@@ -518,7 +523,8 @@
       info.append(element('span', 'track-title', track.title), element('span', 'track-sub', [track.album.artist, track.album.title].filter(Boolean).join(' · ')));
       const symbol = element('span');
       symbol.innerHTML = icon('play');
-      row.append(element('span', 'track-index', String(index + 1).padStart(2, '0')), info, symbol);
+      const artwork = track.cover ? cover(track.album, track.cover) : element('span', 'track-index', String(index + 1).padStart(2, '0'));
+      row.append(artwork, info, symbol);
       const group = element('div', 'track-row');
       group.append(row, iconButton(`Actions for ${track.title}`, 'more', () => openSongActions(track)));
       list.append(group);
@@ -638,7 +644,7 @@
     const track = current();
     if (!track) return;
     message(playerNote, '');
-    byId('mini-cover').replaceChildren(cover(track.album));
+    byId('mini-cover').replaceChildren(cover(track.album, track.cover));
     byId('now-title').textContent = track.title;
     byId('now-album').textContent = [track.album.artist, track.album.title].filter(Boolean).join(' · ');
     remainingSources = sources(track.path);
