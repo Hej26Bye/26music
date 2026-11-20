@@ -1,0 +1,319 @@
+name: Add song artwork
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: song-artwork-main
+  cancel-in-progress: false
+
+jobs:
+  artwork:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Find and embed cover artwork
+        id: artwork
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import functools
+          import io
+          import json
+          import os
+          import re
+          import shutil
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          import unicodedata
+          from pathlib import Path
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".oga", ".opus", ".webm"}
+          LFS_HEADER = b"version https://git-lfs.github.com/spec/v1"
+          USER_AGENT = f"26music-cover-import/1.0 (https://github.com/{os.environ['GITHUB_REPOSITORY']})"
+          WORKFLOW = ".github/workflows/add-song-artwork.yml"
+          COVER_MARKER = ".cover.jpg"
+          DISK = re.compile(r"^(?:cd|disc|disk)[ ._-]*\d+$", re.I)
+          EDITION = re.compile(r"\s*[（(][^）)]*(?:live|remix|acoustic|现场|現場|摇滚|搖滾|版)[^）)]*[）)]\s*$", re.I)
+
+          def git(*arguments):
+              return subprocess.check_output(["git", *arguments])
+
+          def tracked_tracks():
+              paths = []
+              for entry in git("ls-files", "--stage", "-z").split(b"\0"):
+                  if not entry:
+                      continue
+                  info, filename = entry.split(b"\t", 1)
+                  mode, _, stage = info.split()
+                  path = Path(os.fsdecode(filename))
+                  if stage == b"0" and mode in {b"100644", b"100755"} and path.suffix.lower() in AUDIO_EXTENSIONS:
+                      paths.append(path)
+              return sorted(paths)
+
+          def work_items():
+              tracks = [path for path in tracked_tracks() if not Path(str(path) + COVER_MARKER).is_file()]
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event:
+                  before = json.load(event).get("before")
+              if os.environ["GITHUB_EVENT_NAME"] != "push" or not before or not before.strip("0"):
+                  return tracks
+              try:
+                  changed = {os.fsdecode(path) for path in git("diff", "--name-only", "--diff-filter=AMR", "-z", before, "HEAD").split(b"\0")}
+              except subprocess.CalledProcessError:
+                  return tracks
+              if WORKFLOW in changed or any(Path(path).suffix.lower() in AUDIO_EXTENSIONS for path in changed):
+                  return tracks
+              return []
+
+          def download(url, limit):
+              request = Request(url, headers={"User-Agent": USER_AGENT})
+              for attempt in range(3):
+                  try:
+                      with urlopen(request, timeout=18) as response:
+                          data = response.read(limit + 1)
+                          if len(data) > limit:
+                              raise ValueError("Cover download exceeded size limit")
+                          return data
+                  except HTTPError as error:
+                      if error.code == 404:
+                          return None
+                      if attempt == 2 or error.code not in {429, 500, 502, 503, 504}:
+                          raise
+                      retry_after = error.headers.get("Retry-After", "")
+                      time.sleep(min(45, int(retry_after)) if retry_after.isdecimal() else 2 ** (attempt + 1))
+                  except (TimeoutError, URLError):
+                      if attempt == 2:
+                          raise
+                      time.sleep(2 ** (attempt + 1))
+
+          def canonical_jpeg(data):
+              with Image.open(io.BytesIO(data)) as image:
+                  image = ImageOps.exif_transpose(image)
+                  image.thumbnail((500, 500))
+                  out = io.BytesIO()
+                  image.convert("RGB").save(out, "JPEG", quality=88, optimize=True)
+                  return out.getvalue()
+
+          def metadata(audio, path):
+              def first(tag):
+                  return (audio.get(tag) or [""])[0].strip() if audio is not None else ""
+              parent = path.parent.parent if DISK.fullmatch(path.parent.name) else path.parent
+              label = parent.name
+              parts = label.split(" - ", 1)
+              artist = first("artist") or first("albumartist") or (parts[0] if len(parts) == 2 else parent.parent.name or label)
+              album = first("album") or parts[-1]
+              filename = re.sub(r"\s*\[[\w-]{11}\]$", "", path.stem)
+              title = first("title") or re.sub(r"^\d{1,3}(?:\s*[-._)]\s*|\s+)", "", filename)
+              return title, artist, album
+
+          def normalized(value):
+              value = chinese.convert(unicodedata.normalize("NFKC", value)).casefold()
+              return "".join(char for char in value if char.isalnum())
+
+          def quote(value):
+              return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+          @functools.lru_cache(maxsize=512)
+          def recordings(title, artist):
+              time.sleep(1.15)
+              query = f"recording:{quote(title)} AND artist:{quote(artist)}"
+              url = "https://musicbrainz.org/ws/2/recording?" + urlencode({"query": query, "fmt": "json", "limit": 10})
+              data = download(url, 2_000_000)
+              return json.loads(data).get("recordings", []) if data else []
+
+          @functools.lru_cache(maxsize=128)
+          def release_cover(release):
+              url = f"https://coverartarchive.org/release/{release}/front-500"
+              data = download(url, 5_000_000)
+              return canonical_jpeg(data) if data else None
+
+          def find_cover(title, artist, album, length):
+              if not (title and artist):
+                  return None
+              wanted_artist, wanted_album = normalized(artist), normalized(album)
+              for candidate_title in dict.fromkeys((title, EDITION.sub("", title))):
+                  wanted_title = normalized(candidate_title)
+                  releases = {}
+                  for recording in recordings(candidate_title, artist):
+                      if normalized(recording.get("title", "")) != wanted_title:
+                          continue
+                      credits = recording.get("artist-credit", [])
+                      names = {normalized(name) for credit in credits for name in (credit.get("name", ""), credit.get("artist", {}).get("name", ""))}
+                      if wanted_artist not in names:
+                          continue
+                      difference = abs(recording["length"] / 1000 - length) if recording.get("length") and length else 0
+                      for release in recording.get("releases", []):
+                          identity = release.get("id", "")
+                          if not re.fullmatch(r"[a-f0-9-]{36}", identity):
+                              continue
+                          score = (100 if normalized(release.get("title", "")) == wanted_album else 0) - min(difference, 60)
+                          releases[identity] = max(score, releases.get(identity, -1000))
+                  for release in sorted(releases, key=releases.get, reverse=True)[:4]:
+                      cover = release_cover(release)
+                      if cover:
+                          return cover
+              return None
+
+          def existing_picture(audio):
+              if audio is None:
+                  return None
+              tags = audio.tags
+              if isinstance(tags, ID3):
+                  pictures = sorted(tags.getall("APIC"), key=lambda item: item.type != 3)
+                  return pictures[0].data if pictures else None
+              if isinstance(audio, FLAC):
+                  pictures = sorted(audio.pictures, key=lambda item: item.type != 3)
+                  return pictures[0].data if pictures else None
+              if isinstance(audio, MP4):
+                  pictures = (tags or {}).get("covr", [])
+                  return bytes(pictures[0]) if pictures else None
+              if isinstance(audio, (OggVorbis, OggOpus, OggFLAC)):
+                  pictures = (tags or {}).get("metadata_block_picture", [])
+                  return Picture(base64.b64decode(pictures[0])).data if pictures else None
+              return None
+
+          def embed(audio, cover):
+              if isinstance(audio, FLAC):
+                  picture = Picture()
+                  picture.type, picture.mime, picture.desc, picture.data = 3, "image/jpeg", "Front cover", cover
+                  audio.add_picture(picture)
+              elif isinstance(audio, (OggVorbis, OggOpus, OggFLAC)):
+                  picture = Picture()
+                  picture.type, picture.mime, picture.desc, picture.data = 3, "image/jpeg", "Front cover", cover
+                  if audio.tags is None:
+                      audio.add_tags()
+                  audio.tags["metadata_block_picture"] = [base64.b64encode(picture.write()).decode("ascii")]
+              elif isinstance(audio, MP4):
+                  if audio.tags is None:
+                      audio.add_tags()
+                  audio.tags["covr"] = [MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)]
+              elif isinstance(audio, (MP3, WAVE)):
+                  if audio.tags is None:
+                      audio.add_tags()
+                  audio.tags.add(APIC(mime="image/jpeg", type=3, desc="Front cover", data=cover))
+              else:
+                  return False
+              audio.save()
+              return True
+
+          def working_audio(source, destination):
+              with source.open("rb") as audio:
+                  if audio.read(len(LFS_HEADER)) != LFS_HEADER:
+                      shutil.copyfile(source, destination)
+                      return
+                  audio.seek(0)
+                  environment = os.environ.copy()
+                  environment.pop("GIT_LFS_SKIP_SMUDGE", None)
+                  with destination.open("wb") as output:
+                      subprocess.run(["git", "lfs", "smudge"], stdin=audio, stdout=output, env=environment, check=True, timeout=150)
+              with destination.open("rb") as audio:
+                  if audio.read(len(LFS_HEADER)) == LFS_HEADER:
+                      raise ValueError("Git LFS did not return audio data")
+
+          def process(track):
+              sidecar = Path(str(track) + COVER_MARKER)
+              with tempfile.TemporaryDirectory(dir=track.parent) as directory:
+                  working = Path(directory) / track.name
+                  working_audio(track, working)
+                  audio = mutagen.File(working)
+                  embedded = existing_picture(audio)
+                  if embedded:
+                      cover = canonical_jpeg(embedded)
+                      result = "existing"
+                  else:
+                      easy = mutagen.File(working, easy=True) if audio is not None else None
+                      title, artist, album = metadata(easy, track)
+                      cover = find_cover(title, artist, album, getattr(getattr(audio, "info", None), "length", None))
+                      if not cover:
+                          return "unmatched"
+                      if embed(audio, cover):
+                          if not existing_picture(mutagen.File(working)):
+                              raise ValueError("Embedded picture did not pass verification")
+                          shutil.copymode(track, working)
+                          os.replace(working, track)
+                          result = "embedded"
+                      else:
+                          result = "sidecar"
+                  sidecar.write_bytes(cover)
+              stage = [str(sidecar), str(track)] if result == "embedded" else [str(sidecar)]
+              git("--literal-pathspecs", "add", "--", *stage)
+              return result
+
+          tracks = work_items()
+          if not tracks:
+              print("No pending song artwork for this push.")
+              sys.exit(0)
+          subprocess.run([sys.executable, "-m", "pip", "install", "mutagen==1.47.0", "Pillow>=11.3,<13", "opencc-python-reimplemented==0.1.7"], check=True)
+          import mutagen
+          from mutagen.flac import FLAC, Picture
+          from mutagen.id3 import APIC, ID3
+          from mutagen.mp3 import MP3
+          from mutagen.mp4 import MP4, MP4Cover
+          from mutagen.oggflac import OggFLAC
+          from mutagen.oggopus import OggOpus
+          from mutagen.oggvorbis import OggVorbis
+          from mutagen.wave import WAVE
+          from opencc import OpenCC
+          from PIL import Image, ImageOps
+
+          chinese = OpenCC("t2s")
+          counts = {"embedded": 0, "existing": 0, "sidecar": 0, "unmatched": 0, "error": 0}
+          deadline = time.monotonic() + 36 * 60
+          processed = 0
+          for path in tracks:
+              if time.monotonic() > deadline:
+                  break
+              processed += 1
+              try:
+                  result = process(path)
+              except Exception as error:
+                  print(f"{path}: {error}", file=sys.stderr, flush=True)
+                  result = "error"
+              counts[result] += 1
+              print(f"{result}: {path}", flush=True)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              for label, count in counts.items():
+                  print(f"- {label}: {count}", file=summary)
+              print(f"- deferred: {len(tracks) - processed}", file=summary)
+          sys.exit(bool(counts["error"] or len(tracks) != processed))
+          PY
+      - name: Push verified artwork changes
+        if: ${{ !cancelled() && (steps.artwork.outcome == 'success' || steps.artwork.outcome == 'failure') }}
+        shell: bash
+        run: |
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Add cover artwork to songs'
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git rebase FETCH_HEAD
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+          done
+          echo 'Unable to push the artwork commit.'
+          exit 1
