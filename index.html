@@ -159,6 +159,12 @@
     .playlist-song{min-height:44px}
   }
   @media (max-width:500px){
+    .sidebar{padding-inline:12px}
+    .side-inner nav [data-icon]{display:none}
+    .side-inner nav{gap:2px}
+    .brand{gap:5px}
+    .nav-btn{padding-inline:6px}
+    .nav-btn{min-height:44px}
     .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:17px 12px}
     #refresh span{display:none}
     .refresh{min-height:44px}
@@ -189,6 +195,7 @@
         <p class="nav-label">Library</p>
         <button class="nav-btn" id="albums-nav" aria-current="page"><span data-icon="albums"></span>Albums</button>
         <button class="nav-btn" id="songs-nav"><span data-icon="music"></span>Songs</button>
+        <button class="nav-btn" id="downloads-nav"><span data-icon="download"></span>Downloads</button>
       </nav>
     </div>
   </aside>
@@ -266,6 +273,8 @@
 <dialog id="song-actions" class="song-actions" aria-labelledby="song-actions-title">
   <header><h2 id="song-actions-title"></h2><form method="dialog"><button class="icon-btn" data-icon="close" aria-label="Close song actions"></button></form></header>
   <div class="action-buttons">
+    <button id="song-download" disabled>Download for offline</button>
+    <p class="muted" id="song-download-status" role="status" hidden></p>
     <button id="song-next">Play Next</button>
     <button id="song-queue">Add to Queue</button>
     <label>Playlist <select id="song-playlists"></select></label>
@@ -306,6 +315,7 @@
     albums: '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".5"/>',
     search: '<circle cx="10.8" cy="10.8" r="5.8"/><path d="m15 15 4 4"/>',
     refresh: '<path d="M20 10a8 8 0 1 0-1.6 7.5M20 4v6h-6"/>',
+    download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/>',
     play: '<path d="m8 5 12 7-12 7z" fill="currentColor" stroke="none"/>',
     pause: '<path d="M9 6v12m6-12v12" stroke-width="3"/>',
     previous: '<path d="M5 5v14m14-14L7 12l12 7z" fill="currentColor"/>',
@@ -471,6 +481,136 @@
   const search = byId('search');
   const notice = byId('notice');
   const playerNote = byId('playback-note');
+  const downloads = new Map();
+  const downloadJobs = new Set();
+  const downloadButton = byId('song-download');
+  const downloadStatus = byId('song-download-status');
+  let downloadDB;
+  let offlineReady = false;
+  let offlineSetup = 'Preparing offline access…';
+
+  function downloadStore(mode, operation) {
+    return new Promise((resolve, reject) => {
+      const tx = downloadDB.transaction('tracks', mode);
+      const result = operation(tx.objectStore('tracks'));
+      tx.oncomplete = () => resolve(result.result);
+      tx.onabort = () => reject(tx.error || result.error);
+    });
+  }
+
+  async function setupOffline() {
+    try {
+      downloadDB = await new Promise((resolve, reject) => {
+        const db = indexedDB.open(`ymusic-downloads/${repoSlug.toLowerCase()}`, 1);
+        db.onupgradeneeded = () => db.result.createObjectStore('tracks', { keyPath: 'path' });
+        db.onsuccess = () => resolve(db.result);
+        db.onerror = () => reject(db.error);
+      });
+      for (const track of await downloadStore('readonly', store => store.getAll())) {
+        downloads.set(track.path, track);
+      }
+      render();
+      updateDownloadAction();
+    } catch {
+      downloadDB = undefined;
+      offlineSetup = 'Browser storage is unavailable for downloads.';
+      render();
+      updateDownloadAction();
+      return;
+    }
+
+    if (!('serviceWorker' in navigator)) {
+      offlineSetup = 'Open this player on HTTPS to enable offline downloads.';
+    } else {
+      try {
+        const registration = await navigator.serviceWorker.register('./sw.js');
+        const worker = registration.installing || registration.waiting;
+        if (!registration.active) {
+          if (!worker) throw new Error('Offline setup failed');
+          await new Promise((resolve, reject) => {
+            const checkState = () => {
+              if (worker.state === 'activated') resolve();
+              if (worker.state === 'redundant') reject(new Error('Offline setup failed'));
+            };
+            worker.addEventListener('statechange', checkState);
+            checkState();
+          });
+        }
+        await navigator.serviceWorker.ready;
+        offlineReady = true;
+        offlineSetup = '';
+      } catch {
+        offlineSetup = 'Offline access could not be set up. Reload the player while online.';
+      }
+    }
+    render();
+    updateDownloadAction();
+  }
+
+  function updateDownloadAction() {
+    if (!actionTrack || !songActions.open) return;
+    const busy = downloadJobs.has(actionTrack.path);
+    const saved = downloads.has(actionTrack.path);
+    downloadButton.textContent = saved ? 'Remove download' : 'Download for offline';
+    downloadButton.disabled = busy || !(saved ? downloadDB : offlineReady && navigator.onLine);
+    message(downloadStatus, busy ? (saved ? 'Removing download…' : 'Downloading…') :
+      saved ? 'Available offline on this device.' :
+      offlineSetup || (navigator.onLine ? '' : 'Connect to the internet to download this song.'));
+  }
+
+  const audioTypes = {
+    mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac',
+    wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', webm: 'audio/webm'
+  };
+
+  async function fetchDownload(path) {
+    for (const url of sources(path)) {
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(90000) });
+        if (response.status !== 200 || /^(text\/html|application\/json)\b/i.test(response.headers.get('content-type') || '')) continue;
+        const blob = await response.blob();
+        if (!blob.size || (await blob.slice(0, 64).text()).startsWith('version https://git-lfs.github.com/spec/v1')) continue;
+        const type = audioTypes[path.split('.').at(-1).toLowerCase()];
+        return blob.slice(0, blob.size, type);
+      } catch {}
+    }
+    throw new Error('The audio file could not be downloaded. Check your connection and try again.');
+  }
+
+  async function toggleDownload() {
+    const track = actionTrack;
+    if (!track || downloadButton.disabled) return;
+    const { path, title } = track;
+    const saved = downloads.has(path);
+    downloadJobs.add(path);
+    updateDownloadAction();
+    let result;
+    try {
+      if (saved) {
+        await downloadStore('readwrite', store => store.delete(path));
+        downloads.delete(path);
+        result = 'Download removed.';
+      } else {
+        const blob = await fetchDownload(path);
+        const { id, title: albumTitle, artist } = track.album;
+        const entry = { path, title, album: { id, title: albumTitle, artist }, blob };
+        await downloadStore('readwrite', store => store.put(entry));
+        downloads.set(path, entry);
+        result = 'Available offline on this device.';
+      }
+      render();
+    } catch (error) {
+      result = error?.name === 'QuotaExceededError'
+        ? 'Browser storage is full. Remove a download and try again.'
+        : saved ? 'The download could not be removed. Try again.'
+        : 'The download could not be saved. Check your connection and browser storage, then try again.';
+    } finally {
+      downloadJobs.delete(path);
+      updateDownloadAction();
+      if (songActions.open && actionTrack?.path === path) message(downloadStatus, result);
+      else announce(`${title} · ${result}`);
+    }
+  }
   function message(node, value) {
     node.textContent = value;
     node.hidden = !value;
@@ -491,6 +631,10 @@
   }
   async function refreshLibrary() {
     const refresh = byId('refresh');
+    if (!navigator.onLine) {
+      message(notice, 'You’re offline. Play saved songs in Downloads.');
+      return;
+    }
     refresh.disabled = true;
     message(notice, loaded ? 'Checking for new music…' : '');
     try {
@@ -520,7 +664,9 @@
       const row = button('track', '', () => start(tracks, index));
       row.dataset.track = track.path;
       const info = element('div');
-      info.append(element('span', 'track-title', track.title), element('span', 'track-sub', [track.album.artist, track.album.title].filter(Boolean).join(' · ')));
+      const details = [track.album.artist, track.album.title];
+      if (view !== 'downloads' && downloads.has(track.path)) details.push('Downloaded');
+      info.append(element('span', 'track-title', track.title), element('span', 'track-sub', details.filter(Boolean).join(' · ')));
       const symbol = element('span');
       symbol.innerHTML = icon('play');
       const artwork = track.cover ? cover(track.album, track.cover) : element('span', 'track-index', String(index + 1).padStart(2, '0'));
@@ -545,8 +691,19 @@
     const matches = (...values) => values.some(value => value.toLocaleLowerCase().includes(query));
     byId('hero').hidden = view !== 'albums' || Boolean(query);
     content.replaceChildren();
-    byId('albums-nav').setAttribute('aria-current', view !== 'songs' ? 'page' : 'false');
+    byId('albums-nav').setAttribute('aria-current', view === 'albums' || view === 'detail' ? 'page' : 'false');
     byId('songs-nav').setAttribute('aria-current', view === 'songs' ? 'page' : 'false');
+    byId('downloads-nav').setAttribute('aria-current', view === 'downloads' ? 'page' : 'false');
+    if (view === 'downloads') {
+      const tracks = [...downloads.values()].filter(track => matches(track.title, track.album.title, track.album.artist))
+        .sort((a, b) => collator.compare(a.title, b.title));
+      content.append(heading('Downloads', tracks.length, 'song'));
+      if (tracks.length) content.append(trackList(tracks));
+      else content.append(element('p', 'muted', offlineSetup ||
+        (query ? 'No matching downloads.' : 'Open a song’s menu and choose Download for offline.')));
+      markTrack();
+      return;
+    }
     if (!loaded) return;
     if (view === 'detail' && activeAlbum) {
       const detail = element('div', 'detail');
@@ -581,6 +738,7 @@
     markTrack();
   }
   let originalQueue = [], queue = [], position = -1, shuffled = false, repeat = 0, remainingSources = [], request = 0;
+  let playbackBlobURL;
   const current = () => queue[position];
   function randomize(tracks) {
     const result = [...tracks];
@@ -635,7 +793,9 @@
       audio.src = url;
       playSource();
     } else {
-      message(playerNote, 'This song could not be played. Check that the audio file is publicly accessible and supported by your browser.');
+      message(playerNote, navigator.onLine
+        ? 'This song could not be played. Check that the audio file is publicly accessible and supported by your browser.'
+        : 'This song could not be played offline. Open Downloads to play music saved on this device.');
       if (!lyricsPanel.hidden && !lyricsTrack) lyricsMessage('Lyrics lookup is unavailable until the audio loads.');
     }
   }
@@ -647,8 +807,19 @@
     byId('mini-cover').replaceChildren(cover(track.album, track.cover));
     byId('now-title').textContent = track.title;
     byId('now-album').textContent = [track.album.artist, track.album.title].filter(Boolean).join(' · ');
-    remainingSources = sources(track.path);
-    loadSource();
+    const previousBlobURL = playbackBlobURL;
+    const saved = downloads.get(track.path);
+    playbackBlobURL = saved ? URL.createObjectURL(saved.blob) : undefined;
+    remainingSources = navigator.onLine ? sources(track.path) : [];
+    if (playbackBlobURL) remainingSources.unshift(playbackBlobURL);
+    if (remainingSources.length) loadSource();
+    else {
+      request++;
+      audio.removeAttribute('src');
+      audio.load();
+      loadSource();
+    }
+    if (previousBlobURL) URL.revokeObjectURL(previousBlobURL);
     updatePlayer();
     updateTimeline();
     resetLyrics();
@@ -691,7 +862,7 @@
       if (queue.length) playAt(0);
       return;
     }
-    if (audio.error) playAt(position);
+    if (audio.error || !audio.getAttribute('src')) playAt(position);
     else if (audio.paused) {
       message(playerNote, '');
       playSource();
@@ -968,6 +1139,7 @@
     byId('song-actions-title').textContent = track.title;
     fillPlaylistOptions(songPlaylists);
     songActions.showModal();
+    updateDownloadAction();
   }
   function enqueue(track, next) {
     const entry = { ...track, queuedManually: true };
@@ -1129,6 +1301,7 @@
   byId('song-next').addEventListener('click', () => queueSong(true));
   byId('song-queue').addEventListener('click', () => queueSong(false));
   byId('song-save').addEventListener('click', addToPlaylist);
+  downloadButton.addEventListener('click', toggleDownload);
   byId('play-playlist').addEventListener('click', () => playPlaylist());
   playlistSelect.addEventListener('change', () => {
     playlistIndex = Number(playlistSelect.value);
@@ -1162,6 +1335,7 @@
   });
   byId('albums-nav').addEventListener('click', () => navigate('albums'));
   byId('songs-nav').addEventListener('click', () => navigate('songs'));
+  byId('downloads-nav').addEventListener('click', () => navigate('downloads'));
   byId('refresh').addEventListener('click', refreshLibrary);
   const sourceInput = byId('source-url');
   sourceInput.value = repoURL;
@@ -1220,6 +1394,17 @@
       setCatalog(cached.paths);
     }
   } catch {}
+  window.addEventListener('offline', () => {
+    message(notice, 'You’re offline. Play saved songs in Downloads.');
+    updateDownloadAction();
+  });
+  window.addEventListener('online', () => {
+    message(notice, '');
+    updateDownloadAction();
+    if (!loaded && !byId('refresh').disabled) refreshLibrary();
+  });
+  if (!navigator.onLine) navigate('downloads');
+  setupOffline();
   refreshLibrary();
 </script>
 </body>
