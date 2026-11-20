@@ -27,7 +27,7 @@
   .nav-btn:hover,.icon-btn:hover:enabled,.track:hover{background:#ffffff12}
   main{min-width:0;padding:30px clamp(20px,4.5vw,68px) 48px;max-width:1500px;width:100%;margin-inline:auto;transition:padding-inline var(--panel-motion)}
   .collection-open main{padding-inline:clamp(16px,2.4vw,40px)}
-  .toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:28px}
+  .toolbar{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;gap:12px;align-items:center;margin:-12px 0 16px;padding:12px 0;background:var(--bg)}
   .search{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;width:min(100%,330px);min-width:0;background:#ffffff07;color:var(--muted)}
   .search input{border:0;min-width:0;width:100%;background:none;color:var(--text)}
   .search:focus-within{border-color:var(--accent)}
@@ -73,7 +73,20 @@
   .track .icon{width:16px;height:16px}
   .player{position:fixed;inset:auto 0 0;z-index:4;background:var(--bar);border-top:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) minmax(248px,1.5fr) minmax(0,1fr);align-items:center;gap:16px;padding:12px clamp(12px,3vw,35px) max(12px,env(safe-area-inset-bottom))}
   .now{display:grid;grid-template-columns:47px minmax(0,1fr);align-items:center;gap:11px;min-width:0}
+  #expand-player{grid-template-columns:47px minmax(0,1fr) auto;min-height:44px;border-radius:8px;padding:0;text-align:left}
+  #expand-player:hover{background:#ffffff0b}
+  #expand-player>[data-icon] .icon{width:16px;height:16px;color:var(--muted)}
   .now .cover{border-radius:7px}
+  .player-stage{position:fixed;z-index:7;inset:0 0 var(--player-height);display:grid;grid-template-rows:auto minmax(0,1fr);overflow:auto;background:radial-gradient(ellipse at 50% 20%,#39265c,var(--bg) 72%);padding:max(10px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 10px max(16px,env(safe-area-inset-left));visibility:hidden;transform:translateY(100%);transition:transform var(--panel-motion),visibility 0s 280ms}
+  .player-expanded{overflow:hidden}
+  .player-expanded .player-stage{visibility:visible;transform:none;transition-delay:0s}
+  .player{z-index:8}
+  .stage-header{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-weight:650}
+  .stage-header button{width:44px;height:44px}
+  .stage-track{align-self:safe center;justify-self:center;width:min(100%,400px);text-align:center;padding:8px 0}
+  .stage-track .cover{width:min(100%,clamp(96px,calc(100dvh - var(--player-height) - 155px),390px));margin:0 auto 12px;border-radius:16px}
+  .stage-track h2{font-size:clamp(20px,4.5vw,33px);line-height:1.15;overflow-wrap:anywhere}
+  .stage-track p{margin-top:5px;color:var(--muted);overflow-wrap:anywhere}
   .transport{display:flex;align-items:center;justify-content:center;gap:5px}
   .transport .play{display:grid;place-items:center;width:37px;height:37px;border-radius:50%;background:var(--accent);color:#251737}
   [aria-pressed="true"]{color:var(--accent);background:#cbbaff1d}
@@ -100,7 +113,16 @@
   .track-tools{color:var(--muted)}
   .collection-controls{display:flex;gap:8px;padding:13px 16px 0}
   .collection-controls button,.song-actions button{border:1px solid var(--line);border-radius:8px;padding:7px 11px}
-  .collection-controls button[aria-pressed=true]{border-color:#cbbaff61}
+  .collection-controls button[aria-pressed=true],.download-tabs button[aria-selected=true]{color:var(--accent);background:#cbbaff1d;border-color:#cbbaff61}
+  .download-tabs{padding:0}
+  .download-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+  .download-controls .primary{margin:0;min-height:44px}
+  .detail .download-controls{margin-top:14px}
+  .download-groups{display:grid;gap:4px}
+  .download-group{display:grid;grid-template-columns:44px minmax(0,1fr);align-items:center;gap:12px;width:100%;text-align:left;padding:9px;border-bottom:1px solid var(--line);border-radius:8px}
+  .download-group:hover{background:#ffffff12}
+  .download-group .cover{border-radius:7px}
+  #download-progress{bottom:calc(var(--player-height) + 54px)}
   .music-pane{overflow:auto;min-height:0;padding:14px 16px 18px;overscroll-behavior:contain;scrollbar-width:thin}
   .playlist-form{display:flex;flex-wrap:wrap;gap:7px;margin:9px 0}
   .playlist-form input,.music-pane select,.song-actions select{font:inherit;color:var(--text);background:#201b30;border:1px solid #ffffff34;border-radius:8px;padding:7px 9px;min-width:0}
@@ -130,6 +152,7 @@
   .song-actions label{display:grid;gap:5px;color:var(--muted);font-size:13px;margin-top:4px}
   .action-status{position:fixed;bottom:calc(var(--player-height) + 12px);left:18px;z-index:6;padding:8px 12px;background:var(--bar);border:1px solid var(--line);border-radius:8px;max-width:calc(100vw - 36px)}
   .action-status:empty{padding:0;border:0}
+  #playback-note,.action-status{z-index:9}
   @media (forced-colors:active){.lyric-line[aria-current="true"]>span{color:Highlight;background:none}}
   @media (min-width:901px) and (max-width:1150px){
     .collection-open .refresh span{display:none}
@@ -139,15 +162,15 @@
     body{display:grid;height:100dvh;overflow:hidden;grid-template-rows:minmax(0,1fr) 0px auto;transition:grid-template-rows var(--panel-motion)}
     body.collection-open{grid-template-rows:minmax(0,1fr) min(55dvh,max(0px,calc(100dvh - var(--player-height) - 92px))) auto}
     .shell,.collection-open .shell{grid-row:1;grid-template-columns:minmax(0,1fr);min-height:0;padding:0;overflow:auto;align-content:start;overscroll-behavior:contain;transition:none}
-    .sidebar{padding:12px 18px;border-right:0;border-bottom:1px solid var(--line)}
+    .sidebar{position:sticky;top:0;z-index:3;padding:12px 18px;border-right:0;border-bottom:1px solid var(--line)}
     .side-inner{display:flex;align-items:center;justify-content:space-between;gap:9px;position:static}
     .brand{margin:0;padding:0;font-size:19px}.mark{width:29px;height:29px}
     .nav-label{display:none}.side-inner nav{display:flex;gap:5px}.nav-btn{width:auto;padding:7px 8px;gap:5px;font-size:13px}.nav-btn .icon{width:16px;height:16px}
     main,.collection-open main{padding:16px max(14px,env(safe-area-inset-right)) 36px max(14px,env(safe-area-inset-left));transition:none}
-    .toolbar{margin-bottom:17px}.hero{min-height:220px}
+    .toolbar{top:var(--library-nav-height,69px);margin:-8px 0 9px;padding-block:8px}.hero{min-height:220px}
     .player{position:relative;inset:auto;grid-row:3;grid-template-columns:minmax(0,1fr) auto auto;gap:3px 6px;padding-inline:max(12px,env(safe-area-inset-left)) max(12px,env(safe-area-inset-right))}
     .controls{display:contents}.transport{justify-content:end}.timeline{grid-column:1/-1;grid-row:2}.volume{grid-column:3;grid-row:1;gap:2px}.volume #volume,.volume #mute{display:none}.volume .lyrics-toggle{margin:0}.volume .icon-btn{width:36px}
-    .now{grid-template-columns:35px minmax(0,1fr);gap:7px}.now strong{font-size:13px}.now small{font-size:11px}.transport{gap:1px}.transport .icon-btn{width:28px}.transport .icon{width:16px}
+    .now{grid-template-columns:35px minmax(0,1fr);gap:7px}#expand-player{grid-template-columns:35px minmax(0,1fr) auto}.now strong{font-size:13px}.now small{font-size:11px}.transport{gap:1px}.transport .icon-btn{width:28px}.transport .icon{width:16px}
     #collection-panel{position:relative;inset:auto;grid-row:2;min-height:0;width:100%;border-radius:16px 16px 0 0;transform:translateY(20px);z-index:2;padding-inline:env(safe-area-inset-left) env(safe-area-inset-right)}
     .collection-open #collection-panel{transform:none}
     #collection-panel .lyrics-header{padding:6px 14px}
@@ -181,7 +204,7 @@
     .volume{grid-column:2;grid-row:1}
   }
   @media (prefers-reduced-motion:reduce){
-    body,.shell,main,#collection-panel,.lyric-line{transition:none}
+    body,.shell,main,#collection-panel,.lyric-line,.player-stage{transition:none}
     .lyric-line[aria-current="true"]{transform:none}
   }
 </style>
@@ -217,13 +240,23 @@
         <button class="primary" type="submit">Load Library</button>
       </form>
     </details>
+    <div id="download-tabs" class="collection-controls download-tabs" role="tablist" aria-label="Download types" hidden>
+      <button id="download-tab-album" type="button" role="tab" data-download-tab="album" aria-controls="content">Albums</button>
+      <button id="download-tab-playlist" type="button" role="tab" data-download-tab="playlist" aria-controls="content">Playlists</button>
+      <button id="download-tab-song" type="button" role="tab" data-download-tab="song" aria-controls="content">Songs</button>
+    </div>
     <section id="content" aria-label="Music library"></section>
   </main>
 </div>
 <p id="playback-note" role="status" hidden></p>
 <p id="action-status" class="action-status" role="status"></p>
+<p id="download-progress" class="action-status" role="status" hidden></p>
+<section id="player-stage" class="player-stage" aria-labelledby="player-stage-label" inert>
+  <header class="stage-header"><span id="player-stage-label">Now playing</span><button class="icon-btn" id="minimize-player" data-icon="down" title="Minimize player" aria-label="Minimize player"></button></header>
+  <div class="stage-track"><div id="stage-cover"></div><h2 id="stage-title">Nothing playing</h2><p id="stage-album">Choose a song</p></div>
+</section>
 <footer class="player" aria-label="Music player">
-  <div class="now"><div id="mini-cover"></div><div><strong id="now-title">Nothing playing</strong><small id="now-album">Choose a song</small></div></div>
+  <button class="now" id="expand-player" type="button" title="Expand player" aria-label="Expand player" aria-expanded="false" aria-controls="player-stage"><span id="mini-cover"></span><span><strong id="now-title">Nothing playing</strong><small id="now-album">Choose a song</small></span><span data-icon="up"></span></button>
   <div class="controls">
     <div class="transport">
       <button class="icon-btn" id="shuffle" data-icon="shuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false" disabled></button>
@@ -258,6 +291,7 @@
       <select id="playlist-select" aria-label="Select playlist"></select>
       <button id="play-playlist" class="collection-button">Play Playlist</button>
     </div>
+    <div class="download-controls"><button id="download-playlist" class="collection-button" data-download-action disabled>Download Playlist</button><span id="playlist-download-state" class="muted"></span></div>
     <form id="playlist-form" class="playlist-form">
       <input id="playlist-name" maxlength="60" required aria-label="New playlist name" placeholder="New playlist name">
       <button class="collection-button" type="submit">Create</button>
@@ -397,7 +431,7 @@
     return [...groups.values()].sort((a, b) => collator.compare(a.title, b.title));
   }
   function cover(album, trackCover) {
-    const node = element('div', 'cover');
+    const node = element('span', 'cover');
     const hue = [...(album?.title || 'Music')].reduce((sum, char) => (sum * 31 + char.codePointAt(0)) % 360, 220);
     node.style.setProperty('--h', hue);
     node.innerHTML = icon('music');
@@ -474,48 +508,78 @@
     }
     return files;
   }
-  let albums = [], allTracks = [], view = 'albums', selected = null, loaded = false;
+  let albums = [], allTracks = [], tracksByPath = new Map(), view = 'albums', selected = null, loaded = false;
   let lyricsFiles = new Map();
   const content = byId('content');
   const audio = byId('audio');
   const search = byId('search');
   const notice = byId('notice');
   const playerNote = byId('playback-note');
-  const downloads = new Map();
-  const downloadJobs = new Set();
+  let downloads = new Map();
+  let downloadGroups = new Map();
+  let downloadTab = 'song';
+  let downloadBusy = false;
+  let downloadChannel;
+  const offlineKey = `ymusic-downloads/${repoSlug.toLowerCase()}`;
   const downloadButton = byId('song-download');
   const downloadStatus = byId('song-download-status');
   let downloadDB;
   let offlineReady = false;
   let offlineSetup = 'Preparing offline access…';
 
-  function downloadStore(mode, operation) {
+  function downloadStore(stores, mode, operation) {
     return new Promise((resolve, reject) => {
-      const tx = downloadDB.transaction('tracks', mode);
-      const result = operation(tx.objectStore('tracks'));
-      tx.oncomplete = () => resolve(result.result);
-      tx.onabort = () => reject(tx.error || result.error);
+      const tx = downloadDB.transaction(stores, mode);
+      const result = operation(tx.objectStore(stores[0]), tx);
+      tx.oncomplete = () => resolve(result?.result);
+      tx.onabort = () => reject(tx.error || result?.error);
     });
+  }
+
+  async function readDownloads() {
+    const [tracks, groups] = await Promise.all([
+      downloadStore(['tracks'], 'readonly', store => store.getAll()),
+      downloadStore(['groups'], 'readonly', store => store.getAll())
+    ]);
+    downloads = new Map(tracks.map(track => [track.path, track]));
+    downloadGroups = new Map(groups.map(group => [group.key, group]));
+  }
+
+  function refreshDownloadViews() {
+    render();
+    renderPlaylist();
+    updateDownloadAction();
   }
 
   async function setupOffline() {
     try {
       downloadDB = await new Promise((resolve, reject) => {
-        const db = indexedDB.open(`ymusic-downloads/${repoSlug.toLowerCase()}`, 1);
-        db.onupgradeneeded = () => db.result.createObjectStore('tracks', { keyPath: 'path' });
+        const db = indexedDB.open(offlineKey, 2);
+        db.onupgradeneeded = event => {
+          if (event.oldVersion === 0) db.result.createObjectStore('tracks', { keyPath: 'path' });
+          db.result.createObjectStore('groups', { keyPath: 'key' });
+        };
         db.onsuccess = () => resolve(db.result);
         db.onerror = () => reject(db.error);
+        db.onblocked = () => {
+          offlineSetup = 'Close other YMusic tabs to finish setting up downloads.';
+          refreshDownloadViews();
+        };
       });
-      for (const track of await downloadStore('readonly', store => store.getAll())) {
-        downloads.set(track.path, track);
+      offlineSetup = 'Preparing offline access…';
+      await readDownloads();
+      if (typeof BroadcastChannel === 'function') {
+        downloadChannel = new BroadcastChannel(offlineKey);
+        downloadChannel.onmessage = async () => {
+          if (downloadBusy) return;
+          try { await readDownloads(); refreshDownloadViews(); } catch {}
+        };
       }
-      render();
-      updateDownloadAction();
+      refreshDownloadViews();
     } catch {
       downloadDB = undefined;
       offlineSetup = 'Browser storage is unavailable for downloads.';
-      render();
-      updateDownloadAction();
+      refreshDownloadViews();
       return;
     }
 
@@ -543,19 +607,23 @@
         offlineSetup = 'Offline access could not be set up. Reload the player while online.';
       }
     }
-    render();
-    updateDownloadAction();
+    refreshDownloadViews();
   }
 
   function updateDownloadAction() {
     if (!actionTrack || !songActions.open) return;
-    const busy = downloadJobs.has(actionTrack.path);
-    const saved = downloads.has(actionTrack.path);
-    downloadButton.textContent = saved ? 'Remove download' : 'Download for offline';
-    downloadButton.disabled = busy || !(saved ? downloadDB : offlineReady && navigator.onLine);
-    message(downloadStatus, busy ? (saved ? 'Removing download…' : 'Downloading…') :
-      saved ? 'Available offline on this device.' :
+    const saved = downloads.get(actionTrack.path);
+    const inGroup = isGroupTrack(actionTrack.path);
+    downloadButton.textContent = saved ? saved.individual === false ? 'Keep as an individual download' :
+      inGroup ? 'Remove individual download' : 'Remove download' : 'Download for offline';
+    downloadButton.disabled = downloadBusy || !(saved ? downloadDB : offlineReady && navigator.onLine);
+    message(downloadStatus, downloadBusy ? 'Updating downloads…' :
+      saved ? (inGroup ? 'Available offline in a downloaded album or playlist.' : 'Available offline on this device.') :
       offlineSetup || (navigator.onLine ? '' : 'Connect to the internet to download this song.'));
+  }
+
+  function isGroupTrack(path, except) {
+    return [...downloadGroups.values()].some(group => group.key !== except && group.paths.includes(path));
   }
 
   const audioTypes = {
@@ -577,39 +645,128 @@
     throw new Error('The audio file could not be downloaded. Check your connection and try again.');
   }
 
+  async function saveTrack(track, individual) {
+    const blob = await fetchDownload(track.path);
+    const { id, title, artist, cover } = track.album;
+    const entry = { path: track.path, title: track.title, album: { id, title, artist, cover }, cover: track.cover, blob, individual };
+    await downloadStore(['tracks'], 'readwrite', store => store.put(entry));
+    downloads.set(track.path, entry);
+  }
+
+  async function downloadTask(label, work) {
+    if (downloadBusy || !downloadDB) return;
+    downloadBusy = true;
+    document.querySelectorAll('[data-download-action]').forEach(node => { node.disabled = true; });
+    updateDownloadAction();
+    const progress = byId('download-progress');
+    message(progress, label);
+    const run = async () => {
+      await readDownloads();
+      return work(text => message(progress, text));
+    };
+    try {
+      return await (navigator.locks ? navigator.locks.request(offlineKey, run) : run());
+    } catch (error) {
+      return error?.name === 'QuotaExceededError'
+        ? 'Browser storage is full. Remove a download and try again.'
+        : 'The download could not be updated. Check your connection and browser storage, then try again.';
+    } finally {
+      downloadBusy = false;
+      message(progress, '');
+      refreshDownloadViews();
+      downloadChannel?.postMessage('updated');
+    }
+  }
+
   async function toggleDownload() {
     const track = actionTrack;
-    if (!track || downloadButton.disabled) return;
+    if (!track || downloadButton.disabled || downloadBusy) return;
     const { path, title } = track;
-    const saved = downloads.has(path);
-    downloadJobs.add(path);
-    updateDownloadAction();
-    let result;
-    try {
-      if (saved) {
-        await downloadStore('readwrite', store => store.delete(path));
+    const original = downloads.get(path);
+    const removing = original && original.individual !== false;
+    const result = await downloadTask(removing ? 'Removing download…' : 'Saving download…', async () => {
+      const saved = downloads.get(path);
+      if (removing && (!saved || !isGroupTrack(path))) {
+        await downloadStore(['tracks'], 'readwrite', store => store.delete(path));
         downloads.delete(path);
-        result = 'Download removed.';
-      } else {
-        const blob = await fetchDownload(path);
-        const { id, title: albumTitle, artist } = track.album;
-        const entry = { path, title, album: { id, title: albumTitle, artist }, blob };
-        await downloadStore('readwrite', store => store.put(entry));
-        downloads.set(path, entry);
-        result = 'Available offline on this device.';
+        return 'Download removed.';
       }
-      render();
-    } catch (error) {
-      result = error?.name === 'QuotaExceededError'
-        ? 'Browser storage is full. Remove a download and try again.'
-        : saved ? 'The download could not be removed. Try again.'
-        : 'The download could not be saved. Check your connection and browser storage, then try again.';
-    } finally {
-      downloadJobs.delete(path);
-      updateDownloadAction();
-      if (songActions.open && actionTrack?.path === path) message(downloadStatus, result);
-      else announce(`${title} · ${result}`);
-    }
+      if (saved) {
+        const entry = { ...saved, individual: !removing };
+        await downloadStore(['tracks'], 'readwrite', store => store.put(entry));
+        downloads.set(path, entry);
+      } else if (!removing) {
+        await saveTrack(track, true);
+      }
+      return removing ? 'Individual download removed. The song is still available in your downloads.' :
+        'Available offline on this device.';
+    });
+    if (songActions.open && actionTrack?.path === path) message(downloadStatus, result);
+    else if (result) announce(`${title} · ${result}`);
+  }
+
+  function groupTracks(group) {
+    return group.paths.map(path => downloads.get(path)).filter(Boolean);
+  }
+
+  async function writeDownloadGroup(key, group) {
+    const previous = downloadGroups.get(key);
+    const keep = new Set(group?.paths);
+    const remove = (previous?.paths || []).filter(path =>
+      !keep.has(path) && downloads.get(path)?.individual === false && !isGroupTrack(path, key));
+    await downloadStore(['groups', 'tracks'], 'readwrite', (groups, tx) => {
+      if (group) groups.put(group);
+      else groups.delete(key);
+      const tracks = tx.objectStore('tracks');
+      for (const path of remove) tracks.delete(path);
+    });
+    for (const path of remove) downloads.delete(path);
+    if (group) downloadGroups.set(key, group);
+    else downloadGroups.delete(key);
+  }
+
+  async function saveDownloadGroup(group) {
+    if (!offlineReady || !navigator.onLine || !group.paths.length) return;
+    const result = await downloadTask(`Downloading ${group.name}…`, async progress => {
+      await writeDownloadGroup(group.key, group);
+      let count = groupTracks(group).length;
+      for (const path of group.paths) {
+        if (downloads.has(path)) continue;
+        progress(`Downloading ${group.name} · ${count} of ${group.paths.length}`);
+        const track = tracksByPath.get(path) || catalog([path])[0]?.tracks[0];
+        if (!track) continue;
+        try {
+          await saveTrack(track, false);
+          count++;
+        } catch (error) {
+          if (error?.name === 'QuotaExceededError') throw error;
+          if (!navigator.onLine) break;
+        }
+      }
+      return count === group.paths.length ? `${group.name} is available offline.` :
+        `Saved ${count} of ${group.paths.length} songs. Open Downloads to retry.`;
+    });
+    if (result) announce(result);
+  }
+
+  function groupDownloadLabel(group) {
+    const previous = downloadGroups.get(group.key);
+    if (!previous) return `Download ${group.kind === 'album' ? 'Album' : 'Playlist'}`;
+    if (group.paths.length !== previous.paths.length || group.paths.some((path, index) => path !== previous.paths[index])) return 'Update download';
+    if (groupTracks(previous).length < previous.paths.length) return 'Finish download';
+    return 'Downloaded';
+  }
+
+  function configureGroupButton(node, group) {
+    node.textContent = groupDownloadLabel(group);
+    node.disabled = downloadBusy || !offlineReady || !navigator.onLine || !group.paths.length || node.textContent === 'Downloaded';
+  }
+
+  function groupDownloadButton(group, className) {
+    const node = button(className, '', () => saveDownloadGroup(group));
+    node.setAttribute('data-download-action', '');
+    configureGroupButton(node, group);
+    return node;
   }
   function message(node, value) {
     node.textContent = value;
@@ -619,6 +776,7 @@
     lyricsFiles = new Map(paths.filter(path => lyricsFile.test(path)).map(path => [path.toLowerCase(), path]));
     albums = catalog(paths);
     allTracks = albums.flatMap(album => album.tracks);
+    tracksByPath = new Map(allTracks.map(track => [track.path, track]));
     if (view === 'detail' && !albums.some(album => album.id === selected)) {
       view = 'albums';
       selected = null;
@@ -685,6 +843,88 @@
     window.scrollTo(0, 0);
     document.querySelector('.shell').scrollTop = 0;
   }
+
+  function renderDownloads(query, matches) {
+    if (downloadTab === 'song') {
+      const tracks = [...downloads.values()].filter(track => matches(track.title, track.album.title, track.album.artist))
+        .sort((a, b) => collator.compare(a.title, b.title));
+      content.append(heading('Downloaded songs', tracks.length, 'song'));
+      if (tracks.length) content.append(trackList(tracks));
+      else content.append(element('p', 'muted', offlineSetup ||
+        (query ? 'No matching downloads.' : 'Open a song’s menu and choose Download for offline.')));
+      return;
+    }
+
+    const group = downloadGroups.get(selected);
+    if (group?.kind === downloadTab) {
+      const allSaved = groupTracks(group);
+      const tracks = allSaved.filter(track => matches(track.title, track.album.title, track.album.artist));
+      const actions = element('div', 'download-controls');
+      const play = button('primary', group.kind === 'album' ? 'Play Album' : 'Play Playlist', () => {
+        shuffled = false;
+        start(allSaved, 0);
+      }, 'play');
+      play.disabled = !allSaved.length;
+      const remove = button('collection-button', 'Remove download', async () => {
+        const result = await downloadTask('Removing download…', async () => {
+          await writeDownloadGroup(group.key);
+          return 'Download removed.';
+        });
+        if (result) announce(result);
+      });
+      remove.setAttribute('data-download-action', '');
+      remove.disabled = downloadBusy || !downloadDB;
+      actions.append(play);
+      if (allSaved.length < group.paths.length) actions.append(groupDownloadButton(group, 'collection-button'));
+      actions.append(remove);
+      content.append(button('back', '‹ Back to downloads', () => navigate('downloads')),
+        heading(group.name, allSaved.length, 'saved song'));
+      if (allSaved.length < group.paths.length) content.append(element('p', 'muted', `${allSaved.length} of ${group.paths.length} songs downloaded`));
+      content.append(actions);
+      if (tracks.length) content.append(trackList(tracks));
+      else if (query) content.append(element('p', 'muted', 'No matching songs.'));
+      return;
+    }
+    const groups = [...downloadGroups.values()].filter(item => item.kind === downloadTab && matches(item.name, item.artist || ''))
+      .sort((a, b) => collator.compare(a.name, b.name));
+    const albumsTab = downloadTab === 'album';
+    content.append(heading(albumsTab ? 'Downloaded albums' : 'Downloaded playlists', groups.length, downloadTab));
+    if (!groups.length) {
+      content.append(element('p', 'muted', offlineSetup || (query ? 'No matching downloads.' :
+        albumsTab ? 'Open an album and choose Download Album.' : 'Open Playlists and choose Download Playlist.')));
+      return;
+    }
+    const list = element('div', 'download-groups');
+    for (const item of groups) {
+      const row = button('download-group', '', () => navigate('downloads', item.key));
+      const info = element('span');
+      const saved = groupTracks(item).length;
+      info.append(element('strong', 'track-title', item.name), element('small', 'track-sub',
+        [item.artist, saved === item.paths.length ? countText(saved, 'song') : `${saved} of ${item.paths.length} songs downloaded`].filter(Boolean).join(' · ')));
+      row.append(cover({ title: item.name, cover: item.cover }), info);
+      list.append(row);
+    }
+    content.append(list);
+  }
+
+  const downloadTabs = byId('download-tabs');
+  const downloadTabButtons = [...downloadTabs.querySelectorAll('[data-download-tab]')];
+  function selectDownloadTab(tab) {
+    downloadTab = tab.dataset.downloadTab;
+    navigate('downloads');
+  }
+  for (const tab of downloadTabButtons) tab.addEventListener('click', () => selectDownloadTab(tab));
+  downloadTabs.addEventListener('keydown', event => {
+    const index = downloadTabButtons.indexOf(event.target);
+    const last = downloadTabButtons.length - 1;
+    const next = { ArrowLeft: index > 0 ? index - 1 : last, ArrowRight: index < last ? index + 1 : 0, Home: 0, End: last }[event.key];
+    if (index < 0 || next === undefined) return;
+    event.preventDefault();
+    const tab = downloadTabButtons[next];
+    selectDownloadTab(tab);
+    tab.focus();
+  });
+
   function render() {
     const query = search.value.trim().toLocaleLowerCase();
     const activeAlbum = albums.find(album => album.id === selected);
@@ -694,24 +934,36 @@
     byId('albums-nav').setAttribute('aria-current', view === 'albums' || view === 'detail' ? 'page' : 'false');
     byId('songs-nav').setAttribute('aria-current', view === 'songs' ? 'page' : 'false');
     byId('downloads-nav').setAttribute('aria-current', view === 'downloads' ? 'page' : 'false');
+    downloadTabs.hidden = view !== 'downloads';
     if (view === 'downloads') {
-      const tracks = [...downloads.values()].filter(track => matches(track.title, track.album.title, track.album.artist))
-        .sort((a, b) => collator.compare(a.title, b.title));
-      content.append(heading('Downloads', tracks.length, 'song'));
-      if (tracks.length) content.append(trackList(tracks));
-      else content.append(element('p', 'muted', offlineSetup ||
-        (query ? 'No matching downloads.' : 'Open a song’s menu and choose Download for offline.')));
+      for (const tab of downloadTabButtons) {
+        const active = tab.dataset.downloadTab === downloadTab;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+      }
+      content.setAttribute('role', 'tabpanel');
+      content.setAttribute('aria-labelledby', `download-tab-${downloadTab}`);
+      content.tabIndex = 0;
+      renderDownloads(query, matches);
       markTrack();
       return;
     }
+    content.removeAttribute('role');
+    content.removeAttribute('aria-labelledby');
+    content.removeAttribute('tabindex');
     if (!loaded) return;
     if (view === 'detail' && activeAlbum) {
       const detail = element('div', 'detail');
       const info = element('div');
       info.append(element('h1', '', activeAlbum.title));
       if (activeAlbum.artist) info.append(element('p', '', activeAlbum.artist));
-      info.append(element('p', '', countText(activeAlbum.tracks.length, 'song')),
-        button('primary', 'Play Album', () => start(activeAlbum.tracks, 0), 'play'));
+      const group = { key: `album:${activeAlbum.id}`, kind: 'album', name: activeAlbum.title,
+        artist: activeAlbum.artist, cover: activeAlbum.cover, paths: activeAlbum.tracks.map(track => track.path) };
+      const actions = element('div', 'download-controls');
+      actions.append(button('primary', 'Play Album', () => start(activeAlbum.tracks, 0), 'play'),
+        groupDownloadButton(group, 'collection-button'));
+      info.append(element('p', '', countText(activeAlbum.tracks.length, 'song')), actions);
+      if (offlineSetup) info.append(element('p', 'muted', offlineSetup));
       detail.append(cover(activeAlbum), info);
       const tracks = activeAlbum.tracks.filter(track => matches(track.title));
       content.append(button('back', '‹ All albums', () => navigate('albums')), detail,
@@ -806,7 +1058,8 @@
     message(playerNote, '');
     byId('mini-cover').replaceChildren(cover(track.album, track.cover));
     byId('now-title').textContent = track.title;
-    byId('now-album').textContent = [track.album.artist, track.album.title].filter(Boolean).join(' · ');
+    byId('now-album').textContent = trackSubtitle(track);
+    if (!playerStage.inert) updateStageTrack();
     const previousBlobURL = playbackBlobURL;
     const saved = downloads.get(track.path);
     playbackBlobURL = saved ? URL.createObjectURL(saved.blob) : undefined;
@@ -1055,6 +1308,7 @@
     else lyricFrame = 0;
   }
   function setLyricsOpen(open) {
+    if (open && !playerStage.inert) setPlayerExpanded(false);
     if (open && !collectionPanel.inert) setCollectionOpen(false);
     lyricsPanel.hidden = !open;
     byId('lyrics-toggle').setAttribute('aria-expanded', String(open));
@@ -1074,6 +1328,7 @@
   byId('lyrics-close').addEventListener('click', () => setLyricsOpen(false));
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || songActions.open) return;
+    if (!playerStage.inert) setPlayerExpanded(false);
     if (!lyricsPanel.hidden) setLyricsOpen(false);
     if (!collectionPanel.inert) setCollectionOpen(false);
   });
@@ -1115,6 +1370,7 @@
     select.value = String(playlistIndex);
   }
   function setCollectionOpen(open) {
+    if (open && !playerStage.inert) setPlayerExpanded(false);
     if (open && !lyricsPanel.hidden) setLyricsOpen(false);
     document.body.classList.toggle('collection-open', open);
     collectionPanel.inert = !open;
@@ -1169,8 +1425,21 @@
     renderPlaylist();
   }
   function playlistTracks() {
-    const tracks = new Map(allTracks.map(track => [track.path, track]));
-    return playlists[playlistIndex].paths.map(path => ({ path, track: tracks.get(path) }));
+    return playlists[playlistIndex].paths.map(path => ({
+      path, track: (navigator.onLine ? tracksByPath.get(path) : null) || downloads.get(path)
+    }));
+  }
+  function playlistDownloadGroup() {
+    const playlist = playlists[playlistIndex];
+    return { key: `playlist:${playlistIndex}`, kind: 'playlist', name: playlist.name, paths: [...playlist.paths] };
+  }
+  function updatePlaylistDownload() {
+    const group = playlistDownloadGroup();
+    configureGroupButton(byId('download-playlist'), group);
+    const saved = downloadGroups.get(group.key);
+    byId('playlist-download-state').textContent = saved
+      ? `${groupTracks(saved).length} of ${saved.paths.length} songs saved`
+      : group.paths.length ? offlineSetup || (navigator.onLine ? '' : 'Connect to download this playlist.') : '';
   }
   function playPlaylist(path) {
     const tracks = playlistTracks().map(item => item.track).filter(Boolean);
@@ -1234,6 +1503,7 @@
   }
   function renderPlaylist() {
     fillPlaylistOptions(playlistSelect);
+    updatePlaylistDownload();
     const entries = playlistTracks();
     byId('play-playlist').disabled = !entries.some(item => item.track);
     byId('playlist-summary').textContent = entries.length
@@ -1303,6 +1573,7 @@
   byId('song-save').addEventListener('click', addToPlaylist);
   downloadButton.addEventListener('click', toggleDownload);
   byId('play-playlist').addEventListener('click', () => playPlaylist());
+  byId('download-playlist').addEventListener('click', () => saveDownloadGroup(playlistDownloadGroup()));
   playlistSelect.addEventListener('change', () => {
     playlistIndex = Number(playlistSelect.value);
     savePlaylists();
@@ -1380,10 +1651,50 @@
   for (const event of ['timeupdate', 'durationchange', 'loadedmetadata', 'emptied']) audio.addEventListener(event, updateTimeline);
   for (const event of ['play', 'pause']) audio.addEventListener(event, updatePlayer);
   const playerBar = document.querySelector('.player');
+  const libraryShell = document.querySelector('.shell');
+  const libraryNav = document.querySelector('.sidebar');
+  const playerStage = byId('player-stage');
+  const expandPlayer = byId('expand-player');
+  const minimizePlayer = byId('minimize-player');
+
+  function trackSubtitle(track) {
+    return [track.album.artist, track.album.title].filter(Boolean).join(' · ');
+  }
+
+  function updateStageTrack() {
+    const track = current();
+    byId('stage-cover').replaceChildren(cover(track?.album, track?.cover));
+    byId('stage-title').textContent = track?.title || 'Nothing playing';
+    byId('stage-album').textContent = track ? trackSubtitle(track) : 'Choose a song';
+  }
+
+  function setPlayerExpanded(open) {
+    if (open) {
+      if (!lyricsPanel.hidden) setLyricsOpen(false);
+      if (!collectionPanel.inert) setCollectionOpen(false);
+      updateStageTrack();
+    }
+    document.body.classList.toggle('player-expanded', open);
+    playerStage.inert = !open;
+    libraryShell.inert = open;
+    expandPlayer.setAttribute('aria-expanded', String(open));
+    const label = open ? 'Minimize player' : 'Expand player';
+    expandPlayer.title = label;
+    expandPlayer.setAttribute('aria-label', label);
+    expandPlayer.querySelector('[data-icon]').innerHTML = icon(open ? 'down' : 'up');
+    (open ? minimizePlayer : expandPlayer).focus({ preventScroll: true });
+  }
+
+  expandPlayer.addEventListener('click', () => setPlayerExpanded(playerStage.inert));
+  minimizePlayer.addEventListener('click', () => setPlayerExpanded(false));
+
   if (typeof ResizeObserver === 'function') {
-    new ResizeObserver(() => {
+    const sizes = new ResizeObserver(() => {
       document.body.style.setProperty('--player-height', `${playerBar.offsetHeight}px`);
-    }).observe(playerBar);
+      document.body.style.setProperty('--library-nav-height', `${libraryNav.offsetHeight}px`);
+    });
+    sizes.observe(playerBar);
+    sizes.observe(libraryNav);
   }
   byId('mini-cover').append(cover());
   resetLyrics();
@@ -1396,11 +1707,11 @@
   } catch {}
   window.addEventListener('offline', () => {
     message(notice, 'You’re offline. Play saved songs in Downloads.');
-    updateDownloadAction();
+    refreshDownloadViews();
   });
   window.addEventListener('online', () => {
     message(notice, '');
-    updateDownloadAction();
+    refreshDownloadViews();
     if (!loaded && !byId('refresh').disabled) refreshLibrary();
   });
   if (!navigator.onLine) navigate('downloads');
