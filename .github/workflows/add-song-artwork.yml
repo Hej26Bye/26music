@@ -56,6 +56,10 @@ jobs:
           COVER_MARKER = ".cover.jpg"
           DISK = re.compile(r"^(?:cd|disc|disk)[ ._-]*\d+$", re.I)
           EDITION = re.compile(r"\s*[（(][^）)]*(?:live|remix|acoustic|现场|現場|摇滚|搖滾|版)[^）)]*[）)]\s*$", re.I)
+          YOUTUBE_URL = re.compile(
+              r"https?://(?:(?:www\.|music\.|m\.)?youtube\.com/watch\?[^\s#]*?\bv=|youtu\.be/)([\w-]{11})(?![\w-])",
+              re.I | re.ASCII,
+          )
 
           def git(*arguments):
               return subprocess.check_output(["git", *arguments])
@@ -148,6 +152,57 @@ jobs:
               data = download(url, 5_000_000)
               return canonical_jpeg(data) if data else None
 
+          def credit_matches(item, artist):
+              names = {normalized(name) for credit in item.get("artist-credit", [])
+                       for name in (credit.get("name", ""), credit.get("artist", {}).get("name", ""))}
+              return artist in names
+
+          @functools.lru_cache(maxsize=128)
+          def album_cover(album, artist):
+              if not album or normalized(album) == normalized(artist):
+                  return None
+              time.sleep(1.15)
+              query = f"release:{quote(album)} AND artist:{quote(artist)}"
+              url = "https://musicbrainz.org/ws/2/release?" + urlencode({"query": query, "fmt": "json", "limit": 8})
+              data = download(url, 2_000_000)
+              for release in (json.loads(data).get("releases", []) if data else []):
+                  identity = release.get("id", "")
+                  if (normalized(release.get("title", "")) == normalized(album)
+                          and credit_matches(release, normalized(artist))
+                          and re.fullmatch(r"[a-f0-9-]{36}", identity)):
+                      cover = release_cover(identity)
+                      if cover:
+                          return cover
+              return None
+
+          @functools.lru_cache(maxsize=128)
+          def video_cover(identity):
+              data = download(f"https://i.ytimg.com/vi/{identity}/hqdefault.jpg", 2_000_000)
+              if data:
+                  with Image.open(io.BytesIO(data)) as image:
+                      if image.width >= 320 and image.height >= 180:
+                          return canonical_jpeg(data)
+              return None
+
+          def original_video(audio, track):
+              explicit = re.search(r"\[([\w-]{11})\]$", track.stem, re.ASCII)
+              if explicit:
+                  return explicit[1]
+              tags = getattr(audio, "tags", None)
+              values = []
+              if isinstance(tags, ID3):
+                  for frame_name in ("WOAS", "WXXX", "COMM", "TXXX"):
+                      values.extend(str(frame) for frame in tags.getall(frame_name))
+              elif tags is not None:
+                  for key in ("purl", "website", "url", "comment", "\xa9cmt"):
+                      value = tags.get(key, [])
+                      values.extend(str(item) for item in (value if isinstance(value, list) else [value]))
+              for value in values:
+                  match = YOUTUBE_URL.search(value)
+                  if match:
+                      return match[1]
+              return None
+
           def find_cover(title, artist, album, length):
               if not (title and artist):
                   return None
@@ -158,9 +213,7 @@ jobs:
                   for recording in recordings(candidate_title, artist):
                       if normalized(recording.get("title", "")) != wanted_title:
                           continue
-                      credits = recording.get("artist-credit", [])
-                      names = {normalized(name) for credit in credits for name in (credit.get("name", ""), credit.get("artist", {}).get("name", ""))}
-                      if wanted_artist not in names:
+                      if not credit_matches(recording, wanted_artist):
                           continue
                       difference = abs(recording["length"] / 1000 - length) if recording.get("length") and length else 0
                       for release in recording.get("releases", []):
@@ -173,7 +226,7 @@ jobs:
                       cover = release_cover(release)
                       if cover:
                           return cover
-              return None
+              return album_cover(album, artist)
 
           def existing_picture(audio):
               if audio is None:
@@ -244,7 +297,10 @@ jobs:
                   else:
                       easy = mutagen.File(working, easy=True) if audio is not None else None
                       title, artist, album = metadata(easy, track)
-                      cover = find_cover(title, artist, album, getattr(getattr(audio, "info", None), "length", None))
+                      video_id = original_video(audio, track)
+                      cover = video_cover(video_id) if video_id else None
+                      if not cover:
+                          cover = find_cover(title, artist, album, getattr(getattr(audio, "info", None), "length", None))
                       if not cover:
                           return "unmatched"
                       if embed(audio, cover):
